@@ -281,15 +281,15 @@ def extract_from_html(msg_body):
 
     cut_quotations = False
     while True:
-        cut_quotations_tmp = html_quotations.cut_blockquote(html_tree) 
+        cut_quotations_tmp = html_quotations.cut_blockquote(html_tree)
         cut_quotations_tmp = html_quotations.cut_gmail_quote(html_tree) or cut_quotations_tmp
         cut_quotations_tmp = html_quotations.cut_microsoft_quote(html_tree) or cut_quotations_tmp
         cut_quotations_tmp = html_quotations.cut_by_id(html_tree) or cut_quotations_tmp
         cut_quotations_tmp = html_quotations.cut_from_block(html_tree) or cut_quotations_tmp
-        if !cut_quotations_tmp
-            break
-        else
+        if cut_quotations_tmp == True:
             cut_quotations = True
+        else:
+            break
 
     html_tree_copy = deepcopy(html_tree)
 
