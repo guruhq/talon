@@ -279,11 +279,17 @@ def extract_from_html(msg_body):
         parser=html.HTMLParser(encoding="utf-8")
     )
 
-    cut_quotations = html_quotations.cut_blockquote(html_tree)
-    cut_quotations = html_quotations.cut_gmail_quote(html_tree) or cut_quotations
-    cut_quotations = html_quotations.cut_microsoft_quote(html_tree) or cut_quotations
-    cut_quotations = html_quotations.cut_by_id(html_tree) or cut_quotations
-    cut_quotations = html_quotations.cut_from_block(html_tree) or cut_quotations
+    cut_quotations = False
+    while True:
+        cut_quotations_tmp = html_quotations.cut_blockquote(html_tree) 
+        cut_quotations_tmp = html_quotations.cut_gmail_quote(html_tree) or cut_quotations_tmp
+        cut_quotations_tmp = html_quotations.cut_microsoft_quote(html_tree) or cut_quotations_tmp
+        cut_quotations_tmp = html_quotations.cut_by_id(html_tree) or cut_quotations_tmp
+        cut_quotations_tmp = html_quotations.cut_from_block(html_tree) or cut_quotations_tmp
+        if !cut_quotations_tmp
+            break
+        else
+            cut_quotations = True
 
     html_tree_copy = deepcopy(html_tree)
 
