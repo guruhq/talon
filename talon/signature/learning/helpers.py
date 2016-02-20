@@ -16,8 +16,8 @@ from talon.signature.constants import SIGNATURE_MAX_LINES
 
 rc = re.compile
 
-RE_EMAIL = rc('@')
-RE_RELAX_PHONE = rc('.*(\(? ?[\d]{2,3} ?\)?.{,3}){2,}')
+RE_EMAIL = rc('\S@\S')
+RE_RELAX_PHONE = rc('(\(? ?[\d]{2,3} ?\)?.{,3}?){2,}')
 RE_URL = rc(r'''https?://|www\.[\S]+\.[\S]''')
 
 # Taken from:
@@ -39,14 +39,6 @@ RE_SIGNATURE_WORDS = rc(('(T|t)hank.*,|(B|b)est|(R|r)egards|'
 # http://www.cs.cmu.edu/~vitor/papers/sigFilePaper_finalversion.pdf
 # Line contains a pattern like Vitor R. Carvalho or William W. Cohen.
 RE_NAME = rc('[A-Z][a-z]+\s\s?[A-Z][\.]?\s\s?[A-Z][a-z]+')
-
-# Pattern to match if e.g. 'Sender:' header field has sender names.
-SENDER_WITH_NAME_PATTERN = '([\s]*[\S]+,?)+[\s]*<.*>.*'
-RE_SENDER_WITH_NAME = rc(SENDER_WITH_NAME_PATTERN)
-
-# Reply line clue line endings, as in regular expression:
-# " wrote:$" or " writes:$"
-RE_CLUE_LINE_END = rc('.*(W|w)rotes?:$')
 
 INVALID_WORD_START = rc('\(|\+|[\d]')
 
@@ -128,7 +120,7 @@ def contains_sender_names(sender):
     names = names or sender
     if names != '':
         return binary_regex_search(re.compile(names))
-    return lambda s: False
+    return lambda s: 0
 
 
 def extract_names(sender):
@@ -142,7 +134,7 @@ def extract_names(sender):
     >>> extract_names('')
     []
     """
-    sender = to_unicode(sender)
+    sender = to_unicode(sender, precise=True)
     # Remove non-alphabetical characters
     sender = "".join([char if char.isalpha() else ' ' for char in sender])
     # Remove too short words and words from "black" list i.e.
@@ -169,7 +161,7 @@ def categories_percent(s, categories):
     50.0
     '''
     count = 0
-    s = to_unicode(s)
+    s = to_unicode(s, precise=True)
     for c in s:
         if unicodedata.category(c) in categories:
             count += 1
@@ -189,7 +181,7 @@ def punctuation_percent(s):
 
 def capitalized_words_percent(s):
     '''Returns capitalized words percent.'''
-    s = to_unicode(s)
+    s = to_unicode(s, precise=True)
     words = re.split('\s', s)
     words = [w for w in words if w.strip()]
     capitalized_words_counter = 0

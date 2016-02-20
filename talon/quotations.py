@@ -10,10 +10,8 @@ import logging
 from copy import deepcopy
 
 from lxml import html, etree
-import html2text
 
-from talon.constants import RE_DELIMITER
-from talon.utils import random_token, get_delimiter
+from talon.utils import get_delimiter, html_to_text
 from talon import html_quotations
 
 
@@ -23,14 +21,65 @@ log = logging.getLogger(__name__)
 RE_FWD = re.compile("^[-]+[ ]*Forwarded message[ ]*[-]+$", re.I | re.M)
 
 RE_ON_DATE_SMB_WROTE = re.compile(
-    r'''
-    (
-        -*  # could include dashes
-        [ ]?On[ ].*,  # date part ends with comma
-        (.*\n){0,2}  # splitter takes 4 lines at most
-        .*(wrote|sent):
+    u'(-*[>]?[ ]?({0})[ ].*({1})(.*\n){{0,2}}.*({2}):?-*)'.format(
+        # Beginning of the line
+        u'|'.join((
+            # English
+            'On',
+            # French
+            'Le',
+            # Polish
+            'W dniu',
+            # Dutch
+            'Op',
+            # German
+            'Am',
+            # Norwegian
+            u'På',
+            # Swedish, Danish
+            'Den',
+        )),
+        # Date and sender separator
+        u'|'.join((
+            # most languages separate date and sender address by comma
+            ',',
+            # polish date and sender address separator
+            u'użytkownik'
+        )),
+        # Ending of the line
+        u'|'.join((
+            # English
+            'wrote', 'sent',
+            # French
+            u'a écrit',
+            # Polish
+            u'napisał',
+            # Dutch
+            'schreef','verzond','geschreven',
+            # German
+            'schrieb',
+            # Norwegian, Swedish
+            'skrev',
+        ))
+    ))
+# Special case for languages where text is translated like this: 'on {date} wrote {somebody}:'
+RE_ON_DATE_WROTE_SMB = re.compile(
+    u'(-*[>]?[ ]?({0})[ ].*(.*\n){{0,2}}.*({1})[ ]*.*:)'.format(
+        # Beginning of the line
+        u'|'.join((
+        	'Op',
+        	#German
+        	'Am'
+        )),
+        # Ending of the line
+        u'|'.join((
+            # Dutch
+            'schreef','verzond','geschreven',
+            # German
+            'schrieb'
+        ))
     )
-    ''', re.VERBOSE)
+    )
 
 RE_QUOTATION = re.compile(
     r'''
@@ -58,7 +107,7 @@ RE_EMPTY_QUOTATION = re.compile(
     (
         # quotation border: splitter line or a number of quotation marker lines
         (?:
-            s
+            (?:se*)+
             |
             (?:me*){2,}
         )
@@ -66,13 +115,38 @@ RE_EMPTY_QUOTATION = re.compile(
     e*
     ''', re.VERBOSE)
 
+# ------Original Message------ or ---- Reply Message ----
+# With variations in other languages.
+RE_ORIGINAL_MESSAGE = re.compile(u'[\s]*[-]+[ ]*({})[ ]*[-]+'.format(
+    u'|'.join((
+        # English
+        'Original Message', 'Reply Message',
+        # German
+        u'Ursprüngliche Nachricht', 'Antwort Nachricht',
+        # Danish
+        'Oprindelig meddelelse',
+    ))), re.I)
+
+RE_FROM_COLON_OR_DATE_COLON = re.compile(u'(_+\r?\n)?[\s]*(:?[*]?{})[\s]?:[*]? .*'.format(
+    u'|'.join((
+        # "From" in different languages.
+        'From', 'Van', 'De', 'Von', 'Fra', u'Från',
+        # "Date" in different languages.
+        'Date', 'Datum', u'Envoyé', 'Skickat', 'Sendt',
+    ))), re.I)
+
 SPLITTER_PATTERNS = [
-    # ------Original Message------ or ---- Reply Message ----
-    re.compile("[\s]*[-]+[ ]*(Original|Reply) Message[ ]*[-]+", re.I),
-    # <date> <person>
-    re.compile("(\d+/\d+/\d+|\d+\.\d+\.\d+).*@", re.VERBOSE),
+    RE_ORIGINAL_MESSAGE,
     RE_ON_DATE_SMB_WROTE,
-    re.compile('(_+\r?\n)?[\s]*(:?[*]?From|Date):[*]? .*'),
+    RE_ON_DATE_WROTE_SMB,
+    RE_FROM_COLON_OR_DATE_COLON,
+    # 02.04.2012 14:20 пользователь "bob@example.com" <
+    # bob@xxx.mailgun.org> написал:
+    re.compile("(\d+/\d+/\d+|\d+\.\d+\.\d+).*@", re.S),
+    # 2014-10-17 11:28 GMT+03:00 Bob <
+    # bob@example.com>:
+    re.compile("\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+GMT.*@", re.S),
+    # Thu, 26 Jun 2014 14:00:51 +0400 Bob <bob@example.com>:
     re.compile('\S{3,10}, \d\d? \S{3,10} 20\d\d,? \d\d?:\d\d(:\d\d)?'
                '( \S+){3,6}@\S+:')
     ]
@@ -96,7 +170,7 @@ def extract_from(msg_body, content_type='text/plain'):
             return extract_from_plain(msg_body)
         elif content_type == 'text/html':
             return extract_from_html(msg_body)
-    except Exception, e:
+    except Exception:
         log.exception('ERROR extracting message')
 
     return msg_body
@@ -127,6 +201,7 @@ def mark_message_lines(lines):
         else:
             # in case splitter is spread across several lines
             splitter = is_splitter('\n'.join(lines[i:i + SPLITTER_MAX_LINES]))
+
             if splitter:
                 # append as many splitter markers as lines in splitter
                 splitter_lines = splitter.group().splitlines()
@@ -239,12 +314,8 @@ def extract_from_plain(msg_body):
 
     delimiter = get_delimiter(msg_body)
     msg_body = preprocess(msg_body, delimiter)
-    lines = msg_body.splitlines()
-
     # don't process too long messages
-    if len(lines) > MAX_LINES_COUNT:
-        return stripped_text
-
+    lines = msg_body.splitlines()[:MAX_LINES_COUNT]
     markers = mark_message_lines(lines)
     lines = process_marked_lines(lines, markers)
 
@@ -270,48 +341,28 @@ def extract_from_html(msg_body):
     then checking deleted checkpoints,
     then deleting necessary tags.
     """
-
     if msg_body.strip() == '':
         return msg_body
 
+    msg_body = msg_body.replace('\r\n', '').replace('\n', '')
     html_tree = html.document_fromstring(
         msg_body,
         parser=html.HTMLParser(encoding="utf-8")
     )
 
-    cut_quotations = False
-    while True:
-        cut_quotations_tmp = html_quotations.cut_blockquote(html_tree)
-        cut_quotations_tmp = html_quotations.cut_gmail_quote(html_tree) or cut_quotations_tmp
-        cut_quotations_tmp = html_quotations.cut_microsoft_quote(html_tree) or cut_quotations_tmp
-        cut_quotations_tmp = html_quotations.cut_by_id(html_tree) or cut_quotations_tmp
-        cut_quotations_tmp = html_quotations.cut_from_block(html_tree) or cut_quotations_tmp
-        if cut_quotations_tmp == True:
-            cut_quotations = True
-        else:
-            break
-
+    cut_quotations = (html_quotations.cut_gmail_quote(html_tree) or
+                      html_quotations.cut_blockquote(html_tree) or
+                      html_quotations.cut_microsoft_quote(html_tree) or
+                      html_quotations.cut_by_id(html_tree) or
+                      html_quotations.cut_from_block(html_tree)
+                      )
     html_tree_copy = deepcopy(html_tree)
 
     number_of_checkpoints = html_quotations.add_checkpoint(html_tree, 0)
-    quotation_checkpoints = [False for i in xrange(number_of_checkpoints)]
+    quotation_checkpoints = [False] * number_of_checkpoints
     msg_with_checkpoints = html.tostring(html_tree)
-
-    h = html2text.HTML2Text()
-    h.body_width = 0  # generate plain text without wrap
-
-    # html2text adds unnecessary star symbols. Remove them.
-    # Mask star symbols
-    msg_with_checkpoints = msg_with_checkpoints.replace('*', '3423oorkg432')
-    plain_text = h.handle(msg_with_checkpoints)
-    # Remove created star symbols
-    plain_text = plain_text.replace('*', '')
-    # Unmask saved star symbols
-    plain_text = plain_text.replace('3423oorkg432', '*')
-
-    delimiter = get_delimiter(plain_text)
-
-    plain_text = preprocess(plain_text, delimiter, content_type='text/html')
+    plain_text = html_to_text(msg_with_checkpoints)
+    plain_text = preprocess(plain_text, '\n', content_type='text/html')
     lines = plain_text.splitlines()
 
     # Don't process too long messages
@@ -333,7 +384,6 @@ def extract_from_html(msg_body):
     return_flags = []
     process_marked_lines(lines, markers, return_flags)
     lines_were_deleted, first_deleted, last_deleted = return_flags
-
     if lines_were_deleted:
         #collect checkpoints from deleted lines
         for i in xrange(first_deleted, last_deleted):

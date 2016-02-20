@@ -76,7 +76,7 @@ def delete_quotation_tags(html_note, counter, quotation_checkpoints):
 
 def cut_gmail_quote(html_message):
     ''' Cuts the outermost block element with class gmail_quote. '''
-    gmail_quote = html_message.cssselect('.gmail_quote')
+    gmail_quote = html_message.cssselect('div.gmail_quote')
     if gmail_quote:
         gmail_quote[0].getparent().remove(gmail_quote[0])
         return True
@@ -138,9 +138,14 @@ def cut_by_id(html_message):
 
 
 def cut_blockquote(html_message):
-    ''' Cuts blockquote with wrapping elements. '''
-    quote = html_message.find('.//blockquote')
-    if quote is not None:
+    ''' Cuts the last non-nested blockquote with wrapping elements.'''
+    quote = html_message.xpath(
+        '(.//blockquote)'
+        '[not(@class="gmail_quote") and not(ancestor::blockquote)]'
+        '[last()]')
+
+    if quote:
+        quote = quote[0]
         quote.getparent().remove(quote)
         return True
 
@@ -154,21 +159,33 @@ def cut_from_block(html_message):
 
     if block:
         block = block[-1]
+        parent_div = None
         while block.getparent() is not None:
             if block.tag == 'div':
+                parent_div = block
+                break
+            block = block.getparent()
+        if parent_div is not None:
+            maybe_body = parent_div.getparent()
+            # In cases where removing this enclosing div will remove all
+            # content, we should assume the quote is not enclosed in a tag.
+            parent_div_is_all_content = (
+                maybe_body is not None and maybe_body.tag == 'body' and
+                len(maybe_body.getchildren()) == 1)
+            if not parent_div_is_all_content:
                 block.getparent().remove(block)
                 return True
-            else:
-                block = block.getparent()
-    else:
-        # handle the case when From: block goes right after e.g. <hr>
-        # and not enclosed in some tag
-        block = html_message.xpath(
-            ("//*[starts-with(mg:tail(), 'From:')]|"
-             "//*[starts-with(mg:tail(), 'Date:')]"))
-        if block:
-            block = block[0]
-            while(block.getnext() is not None):
-                block.getparent().remove(block.getnext())
-            block.getparent().remove(block)
-            return True
+        else:
+            return False
+
+    # handle the case when From: block goes right after e.g. <hr>
+    # and not enclosed in some tag
+    block = html_message.xpath(
+        ("//*[starts-with(mg:tail(), 'From:')]|"
+         "//*[starts-with(mg:tail(), 'Date:')]"))
+    if block:
+        block = block[0]
+        while(block.getnext() is not None):
+            block.getparent().remove(block.getnext())
+        block.getparent().remove(block)
+        return True
