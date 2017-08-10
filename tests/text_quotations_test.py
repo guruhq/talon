@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from __future__ import absolute_import
 from . import *
 from . fixtures import *
 
@@ -7,6 +8,9 @@ import os
 
 import email.iterators
 from talon import quotations
+import six
+from six.moves import range
+from six import StringIO
 
 
 @patch.object(quotations, 'MAX_LINES_COUNT', 1)
@@ -31,13 +35,39 @@ On 11-Apr-2011, at 6:54 PM, Roman Tkachenko <romant@example.com> wrote:
 
     eq_("Test reply", quotations.extract_from_plain(msg_body))
 
+def test_pattern_on_date_polymail():
+    msg_body = """Test reply
+
+On Tue, Apr 11, 2017 at 10:07 PM John Smith
+
+<
+mailto:John Smith <johnsmith@gmail.com>
+> wrote:
+Test quoted data
+"""
+
+    eq_("Test reply", quotations.extract_from_plain(msg_body))
+
+
+def test_pattern_sent_from_samsung_smb_wrote():
+    msg_body = """Test reply
+
+Sent from Samsung MobileName <address@example.com> wrote:
+
+>
+> Test
+>
+> Roman"""
+
+    eq_("Test reply", quotations.extract_from_plain(msg_body))
+
 
 def test_pattern_on_date_wrote_somebody():
     eq_('Lorem', quotations.extract_from_plain(
     """Lorem
 
 Op 13-02-2014 3:18 schreef Julius Caesar <pantheon@rome.com>:
-    
+
 Veniam laborum mlkshk kale chips authentic. Normcore mumblecore laboris, fanny pack readymade eu blog chia pop-up freegan enim master cleanse.
 """))
 
@@ -125,7 +155,8 @@ def _check_pattern_original_message(original_message_indicator):
 -----{}-----
 
 Test"""
-    eq_('Test reply', quotations.extract_from_plain(msg_body.format(unicode(original_message_indicator))))
+    eq_('Test reply', quotations.extract_from_plain(
+        msg_body.format(six.text_type(original_message_indicator))))
 
 def test_english_original_message():
     _check_pattern_original_message('Original Message')
@@ -145,6 +176,17 @@ def test_reply_after_quotations():
 >
 > Test
 Test reply"""
+    eq_("Test reply", quotations.extract_from_plain(msg_body))
+
+
+def test_android_wrote():
+    msg_body = """Test reply
+
+---- John Smith wrote ----
+
+> quoted
+> text
+"""
     eq_("Test reply", quotations.extract_from_plain(msg_body))
 
 
@@ -227,7 +269,7 @@ def test_with_indent():
 
 ------On 12/29/1987 17:32 PM, Julius Caesar wrote-----
 
-Brunch mumblecore pug Marfa tofu, irure taxidermy hoodie readymade pariatur. 
+Brunch mumblecore pug Marfa tofu, irure taxidermy hoodie readymade pariatur.
     """
     eq_("YOLO salvia cillum kogi typewriter mumblecore cardigan skateboard Austin.", quotations.extract_from_plain(msg_body))
 
@@ -352,13 +394,21 @@ Veniam laborum mlkshk kale chips authentic. Normcore mumblecore laboris, fanny p
 
 def test_dutch_from_block():
     eq_('Gluten-free culpa lo-fi et nesciunt nostrud.', quotations.extract_from_plain(
-    """Gluten-free culpa lo-fi et nesciunt nostrud. 
+    """Gluten-free culpa lo-fi et nesciunt nostrud.
 
 Op 17-feb.-2015, om 13:18 heeft Julius Caesar <pantheon@rome.com> het volgende geschreven:
-    
-Small batch beard laboris tempor, non listicle hella Tumblr heirloom. 
+
+Small batch beard laboris tempor, non listicle hella Tumblr heirloom.
 """))
 
+def test_vietnamese_from_block():
+    eq_('Hello', quotations.extract_from_plain(
+    u"""Hello
+
+Vào 14:24 8 tháng 6, 2017, Hùng Nguyễn <hungnguyen@xxx.com> đã viết:
+
+> Xin chào
+"""))
 
 def test_quotation_marker_false_positive():
     msg_body = """Visit us now for assistance...
@@ -649,6 +699,15 @@ def test_preprocess_postprocess_2_links():
     eq_(msg_body, quotations.extract_from_plain(msg_body))
 
 
+def body_iterator(msg, decode=False):
+    for subpart in msg.walk():
+        payload = subpart.get_payload(decode=decode)
+        if isinstance(payload, six.text_type):
+            yield payload
+        else:
+            yield payload.decode('utf8')
+
+
 def test_standard_replies():
     for filename in os.listdir(STANDARD_REPLIES):
         filename = os.path.join(STANDARD_REPLIES, filename)
@@ -656,8 +715,8 @@ def test_standard_replies():
             continue
         with open(filename) as f:
             message = email.message_from_file(f)
-            body = email.iterators.typed_subpart_iterator(message, subtype='plain').next()
-            text = ''.join(email.iterators.body_line_iterator(body, True))
+            body = next(email.iterators.typed_subpart_iterator(message, subtype='plain'))
+            text = ''.join(body_iterator(body, True))
 
             stripped_text = quotations.extract_from_plain(text)
             reply_text_fn = filename[:-4] + '_reply_text'
@@ -670,3 +729,52 @@ def test_standard_replies():
                 "'%(reply)s' != %(stripped)s for %(fn)s" % \
                 {'reply': reply_text, 'stripped': stripped_text,
                  'fn': filename}
+
+
+def test_split_email():
+    msg = """From: Mr. X
+    Date: 24 February 2016
+    To: Mr. Y
+    Subject: Hi
+    Attachments: none
+    Goodbye.
+    From: Mr. Y
+    To: Mr. X
+    Date: 24 February 2016
+    Subject: Hi
+    Attachments: none
+
+    Hello.
+
+        On 24th February 2016 at 09.32am, Conal wrote:
+
+        Hey!
+
+        On Mon, 2016-10-03 at 09:45 -0600, Stangel, Dan wrote:
+        > Mohan,
+        >
+        > We have not yet migrated the systems.
+        >
+        > Dan
+        >
+        > > -----Original Message-----
+        > > Date: Mon, 2 Apr 2012 17:44:22 +0400
+        > > Subject: Test
+        > > From: bob@xxx.mailgun.org
+        > > To: xxx@gmail.com; xxx@hotmail.com; xxx@yahoo.com; xxx@aol.com; xxx@comcast.net; xxx@nyc.rr.com
+        > >
+        > > Hi
+        > >
+        > > > From: bob@xxx.mailgun.org
+        > > > To: xxx@gmail.com; xxx@hotmail.com; xxx@yahoo.com; xxx@aol.com; xxx@comcast.net; xxx@nyc.rr.com
+        > > > Date: Mon, 2 Apr 2012 17:44:22 +0400
+        > > > Subject: Test
+        > > > Hi
+        > > >
+        > >
+        >
+        >
+"""
+    expected_markers = "stttttsttttetesetesmmmmmmssmmmmmmsmmmmmmmm"
+    markers = quotations.split_emails(msg)
+    eq_(markers, expected_markers)

@@ -1,13 +1,16 @@
 # coding:utf-8
 
-import logging
-from random import shuffle
-import chardet
-import cchardet
-import regex as re
+from __future__ import absolute_import
 
-from lxml import html
+from random import shuffle
+
+import cchardet
+import chardet
+import html5lib
+import regex as re
+import six
 from lxml.cssselect import CSSSelector
+from lxml.html import html5parser
 
 from talon.constants import RE_DELIMITER
 
@@ -28,7 +31,7 @@ def safe_format(format_string, *args, **kwargs):
     except (UnicodeEncodeError, UnicodeDecodeError):
         format_string = to_utf8(format_string)
         args = [to_utf8(p) for p in args]
-        kwargs = {k: to_utf8(v) for k, v in kwargs.iteritems()}
+        kwargs = {k: to_utf8(v) for k, v in six.iteritems(kwargs)}
         return format_string.format(*args, **kwargs)
 
     # ignore other errors
@@ -45,9 +48,9 @@ def to_unicode(str_or_unicode, precise=False):
         u'привет'
     If `precise` flag is True, tries to guess the correct encoding first.
     """
-    encoding = quick_detect_encoding(str_or_unicode) if precise else 'utf-8'
-    if isinstance(str_or_unicode, str):
-        return unicode(str_or_unicode, encoding, 'replace')
+    if not isinstance(str_or_unicode, six.text_type):
+        encoding = quick_detect_encoding(str_or_unicode) if precise else 'utf-8'
+        return six.text_type(str_or_unicode, encoding, 'replace')
     return str_or_unicode
 
 
@@ -57,11 +60,12 @@ def detect_encoding(string):
 
     Defaults to UTF-8.
     """
+    assert isinstance(string, bytes)
     try:
         detected = chardet.detect(string)
         if detected:
             return detected.get('encoding') or 'utf-8'
-    except Exception, e:
+    except Exception as e:
         pass
     return 'utf-8'
 
@@ -72,11 +76,12 @@ def quick_detect_encoding(string):
 
     Uses cchardet. Fallbacks to detect_encoding.
     """
+    assert isinstance(string, bytes)
     try:
         detected = cchardet.detect(string)
         if detected:
             return detected.get('encoding') or detect_encoding(string)
-    except Exception, e:
+    except Exception as e:
         pass
     return detect_encoding(string)
 
@@ -87,7 +92,7 @@ def to_utf8(str_or_unicode):
     >>> utils.to_utf8(u'hi')
         'hi'
     """
-    if isinstance(str_or_unicode, unicode):
+    if not isinstance(str_or_unicode, six.text_type):
         return str_or_unicode.encode("utf-8", "ignore")
     return str(str_or_unicode)
 
@@ -109,28 +114,20 @@ def get_delimiter(msg_body):
     return delimiter
 
 
-def html_to_text(string):
-    """
-    Dead-simple HTML-to-text converter:
-        >>> html_to_text("one<br>two<br>three")
-        >>> "one\ntwo\nthree"
-
-    NOTES:
-        1. the string is expected to contain UTF-8 encoded HTML!
-        2. returns utf-8 encoded str (not unicode)
-    """
-    s = _prepend_utf8_declaration(string)
-    s = s.replace("\n", "")
-
-    tree = html.fromstring(s)
-
+def html_tree_to_text(tree):
     for style in CSSSelector('style')(tree):
         style.getparent().remove(style)
 
     for c in tree.xpath('//comment()'):
-        c.getparent().remove(c)
+        parent = c.getparent()
 
-    text   = ""
+        # comment with no parent does not impact produced text
+        if parent is None:
+            continue
+
+        parent.remove(c)
+
+    text = ""
     for el in tree.iter():
         el_text = (el.text or '') + (el.tail or '')
         if len(el_text) > 1:
@@ -152,10 +149,72 @@ def html_to_text(string):
     return _encode_utf8(retval)
 
 
+def html_to_text(string):
+    """
+    Dead-simple HTML-to-text converter:
+        >>> html_to_text("one<br>two<br>three")
+        >>> "one\ntwo\nthree"
+
+    NOTES:
+        1. the string is expected to contain UTF-8 encoded HTML!
+        2. returns utf-8 encoded str (not unicode)
+        3. if html can't be parsed returns None
+    """
+    if isinstance(string, six.text_type):
+        string = string.encode('utf8')
+
+    s = _prepend_utf8_declaration(string)
+    s = s.replace(b"\n", b"")
+    tree = html_fromstring(s)
+
+    if tree is None:
+        return None
+
+    return html_tree_to_text(tree)
+
+
+def html_fromstring(s):
+    """Parse html tree from string. Return None if the string can't be parsed.
+    """
+    if isinstance(s, six.text_type):
+        s = s.encode('utf8')
+    try:
+        if html_too_big(s):
+            return None
+
+        return html5parser.fromstring(s, parser=_html5lib_parser())
+    except Exception:
+        pass
+
+
+def html_document_fromstring(s):
+    """Parse html tree from string. Return None if the string can't be parsed.
+    """
+    if isinstance(s, six.text_type):
+        s = s.encode('utf8')
+    try:
+        if html_too_big(s):
+            return None
+
+        return html5parser.document_fromstring(s, parser=_html5lib_parser())
+    except Exception:
+        pass
+
+
+def cssselect(expr, tree):
+    return CSSSelector(expr)(tree)
+
+
+def html_too_big(s):
+    if isinstance(s, six.text_type):
+        s = s.encode('utf8')
+    return s.count(b'<') > _MAX_TAGS_COUNT
+
+
 def _contains_charset_spec(s):
     """Return True if the first 4KB contain charset spec
     """
-    return s.lower().find('html; charset=', 0, 4096) != -1
+    return s.lower().find(b'html; charset=', 0, 4096) != -1
 
 
 def _prepend_utf8_declaration(s):
@@ -173,15 +232,32 @@ def _rm_excessive_newlines(s):
 def _encode_utf8(s):
     """Encode in 'utf-8' if unicode
     """
-    return s.encode('utf-8') if isinstance(s, unicode) else s
+    return s.encode('utf-8') if isinstance(s, six.text_type) else s
 
 
-_UTF8_DECLARATION = ('<meta http-equiv="Content-Type" content="text/html;'
-                     'charset=utf-8">')
+def _html5lib_parser():
+    """
+    html5lib is a pure-python library that conforms to the WHATWG HTML spec
+    and is not vulnarable to certain attacks common for XML libraries
+    """
+    return html5lib.HTMLParser(
+        # build lxml tree
+        html5lib.treebuilders.getTreeBuilder("lxml"),
+        # remove namespace value from inside lxml.html.html5paser element tag
+        # otherwise it yields something like "{http://www.w3.org/1999/xhtml}div"
+        # instead of "div", throwing the algo off
+        namespaceHTMLElements=False
+    )
 
 
-_BLOCKTAGS  = ['div', 'p', 'ul', 'li', 'h1', 'h2', 'h3']
+_UTF8_DECLARATION = (b'<meta http-equiv="Content-Type" content="text/html;'
+                     b'charset=utf-8">')
+
+_BLOCKTAGS = ['div', 'p', 'ul', 'li', 'h1', 'h2', 'h3']
 _HARDBREAKS = ['br', 'hr', 'tr']
 
-
 _RE_EXCESSIVE_NEWLINES = re.compile("\n{2,10}")
+
+# an extensive research shows that exceeding this limit
+# might lead to excessive processing time
+_MAX_TAGS_COUNT = 419

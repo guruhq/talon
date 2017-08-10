@@ -16,12 +16,15 @@ suffix and the corresponding sender file has the same name except for the
 suffix which should be `_sender`.
 """
 
+from __future__ import absolute_import
+
 import os
+
 import regex as re
+from six.moves import range
 
 from talon.signature.constants import SIGNATURE_MAX_LINES
 from talon.signature.learning.featurespace import build_pattern, features
-
 
 SENDER_SUFFIX = '_sender'
 BODY_SUFFIX = '_body'
@@ -55,9 +58,14 @@ def parse_msg_sender(filename, sender_known=True):
     algorithm:
     >>> parse_msg_sender(filename, False)
     """
+    import sys
+    kwargs = {}
+    if sys.version_info > (3, 0):
+        kwargs["encoding"] = "utf8"
+
     sender, msg = None, None
     if os.path.isfile(filename) and not is_sender_filename(filename):
-        with open(filename) as f:
+        with open(filename, **kwargs) as f:
             msg = f.read()
             sender = u''
             if sender_known:
@@ -144,8 +152,8 @@ def build_extraction_dataset(folder, dataset_filename,
             if not sender or not msg:
                 continue
             lines = msg.splitlines()
-            for i in xrange(1, min(SIGNATURE_MAX_LINES,
-                                   len(lines)) + 1):
+            for i in range(1, min(SIGNATURE_MAX_LINES,
+                                  len(lines)) + 1):
                 line = lines[-i]
                 label = -1
                 if line[:len(SIGNATURE_ANNOTATION)] == \

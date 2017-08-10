@@ -3,8 +3,10 @@ The module's functions operate on message bodies trying to extract original
 messages (without quoted messages) from html
 """
 
+from __future__ import absolute_import
 import regex as re
 
+from talon.utils import cssselect 
 
 CHECKPOINT_PREFIX = '#!%!'
 CHECKPOINT_SUFFIX = '!%!#'
@@ -12,6 +14,7 @@ CHECKPOINT_PATTERN = re.compile(CHECKPOINT_PREFIX + '\d+' + CHECKPOINT_SUFFIX)
 
 # HTML quote indicators (tag ids)
 QUOTE_IDS = ['OLK_SRC_BODY_SECTION']
+RE_FWD = re.compile("^[-]+[ ]*Forwarded message[ ]*[-]+$", re.I | re.M)
 
 
 def add_checkpoint(html_note, counter):
@@ -76,8 +79,8 @@ def delete_quotation_tags(html_note, counter, quotation_checkpoints):
 
 def cut_gmail_quote(html_message):
     ''' Cuts the outermost block element with class gmail_quote. '''
-    gmail_quote = html_message.cssselect('div.gmail_quote')
-    if gmail_quote:
+    gmail_quote = cssselect('div.gmail_quote', html_message)
+    if gmail_quote and (gmail_quote[0].text is None or not RE_FWD.match(gmail_quote[0].text)):
         gmail_quote[0].getparent().remove(gmail_quote[0])
         return True
 
@@ -85,9 +88,18 @@ def cut_gmail_quote(html_message):
 def cut_microsoft_quote(html_message):
     ''' Cuts splitter block and all following blocks. '''
     splitter = html_message.xpath(
-        #outlook 2007, 2010
+        #outlook 2007, 2010 (international)
         "//div[@style='border:none;border-top:solid #B5C4DF 1.0pt;"
         "padding:3.0pt 0cm 0cm 0cm']|"
+        #outlook 2007, 2010 (american)
+        "//div[@style='border:none;border-top:solid #B5C4DF 1.0pt;"
+        "padding:3.0pt 0in 0in 0in']|"
+        #outlook 2013 (international)
+        "//div[@style='border:none;border-top:solid #E1E1E1 1.0pt;"
+        "padding:3.0pt 0cm 0cm 0cm']|"
+        #outlook 2013 (american)
+        "//div[@style='border:none;border-top:solid #E1E1E1 1.0pt;"
+        "padding:3.0pt 0in 0in 0in']|"
         #windows mail
         "//div[@style='padding-top: 5px; "
         "border-top-color: rgb(229, 229, 229); "
@@ -130,7 +142,7 @@ def cut_microsoft_quote(html_message):
 def cut_by_id(html_message):
     found = False
     for quote_id in QUOTE_IDS:
-        quote = html_message.cssselect('#{}'.format(quote_id))
+        quote = cssselect('#{}'.format(quote_id), html_message)
         if quote:
             found = True
             quote[0].getparent().remove(quote[0])
@@ -172,8 +184,23 @@ def cut_from_block(html_message):
             parent_div_is_all_content = (
                 maybe_body is not None and maybe_body.tag == 'body' and
                 len(maybe_body.getchildren()) == 1)
+
             if not parent_div_is_all_content:
-                block.getparent().remove(block)
+                parent = block.getparent()
+                next_sibling = block.getnext()
+
+                # remove all tags after found From block
+                # (From block and quoted message are in separate divs)
+                while next_sibling is not None:
+                    parent.remove(block)
+                    block = next_sibling
+                    next_sibling = block.getnext()
+
+                # remove the last sibling (or the
+                # From block if no siblings)
+                if block is not None:
+                    parent.remove(block)
+
                 return True
         else:
             return False
@@ -185,7 +212,17 @@ def cut_from_block(html_message):
          "//*[starts-with(mg:tail(), 'Date:')]"))
     if block:
         block = block[0]
+
+        if RE_FWD.match(block.getparent().text or ''):
+            return False
+        
         while(block.getnext() is not None):
             block.getparent().remove(block.getnext())
         block.getparent().remove(block)
+        return True
+
+def cut_zimbra_quote(html_message):
+    zDivider = html_message.xpath('//hr[@data-marker="__DIVIDER__"]')
+    if zDivider:
+        zDivider[0].getparent().remove(zDivider[0])
         return True

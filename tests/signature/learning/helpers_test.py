@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 
+from __future__ import absolute_import
 from ... import *
 
 import regex as re
 
 from talon.signature.learning import helpers as h
 from talon.signature.learning.helpers import *
+from six.moves import range
 
 # First testing regex constants.
 VALID = '''
@@ -154,7 +156,7 @@ def test_extract_names():
         # check that extracted names could be compiled
         try:
             re.compile("|".join(extracted_names))
-        except Exception, e:
+        except Exception as e:
             ok_(False, ("Failed to compile extracted names {}"
                         "\n\nReason: {}").format(extracted_names, e))
         if expected_names:
@@ -190,10 +192,11 @@ def test_punctuation_percent(categories_percent):
 def test_capitalized_words_percent():
     eq_(0.0, h.capitalized_words_percent(''))
     eq_(100.0, h.capitalized_words_percent('Example Corp'))
-    eq_(50.0, h.capitalized_words_percent('Qqq qqq QQQ 123 sss'))
+    eq_(50.0, h.capitalized_words_percent('Qqq qqq Aqs 123 sss'))
     eq_(100.0, h.capitalized_words_percent('Cell 713-444-7368'))
     eq_(100.0, h.capitalized_words_percent('8th Floor'))
     eq_(0.0, h.capitalized_words_percent('(212) 230-9276'))
+    eq_(50.0, h.capitalized_words_percent('Password: REMARKABLE'))
 
 
 def test_has_signature():
@@ -204,7 +207,7 @@ def test_has_signature():
                         'sender@example.com'))
     assert_false(h.has_signature('http://www.example.com/555-555-5555',
                                  'sender@example.com'))
-    long_line = ''.join(['q' for e in xrange(28)])
+    long_line = ''.join(['q' for e in range(28)])
     assert_false(h.has_signature(long_line + ' sender', 'sender@example.com'))
     # wont crash on an empty string
     assert_false(h.has_signature('', ''))

@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 
-from . import *
-from . fixtures import *
+from __future__ import absolute_import
 
-import regex as re
+# noinspection PyUnresolvedReferences
+import re
 
 from talon import quotations, utils as u
-
+from . import *
+from .fixtures import *
 
 RE_WHITESPACE = re.compile("\s")
 RE_DOUBLE_WHITESPACE = re.compile("\s")
@@ -26,7 +27,7 @@ def test_quotation_splitter_inside_blockquote():
 
 </blockquote>"""
 
-    eq_("<html><body><p>Reply</p></body></html>",
+    eq_("<html><head></head><body>Reply</body></html>",
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
 
@@ -43,7 +44,7 @@ def test_quotation_splitter_outside_blockquote():
   </div>
 </blockquote>
 """
-    eq_("<html><body><p>Reply</p></body></html>",
+    eq_("<html><head></head><body>Reply</body></html>",
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
 
@@ -61,7 +62,7 @@ def test_regular_blockquote():
   </div>
 </blockquote>
 """
-    eq_("<html><body><p>Reply</p><blockquote>Regular</blockquote></body></html>",
+    eq_("<html><head></head><body>Reply<blockquote>Regular</blockquote></body></html>",
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
 
@@ -84,6 +85,7 @@ Reply
 
     reply = """
 <html>
+<head></head>
 <body>
 Reply
 
@@ -127,7 +129,18 @@ def test_gmail_quote():
     </div>
   </div>
 </div>"""
-    eq_("<html><body><p>Reply</p></body></html>",
+    eq_("<html><head></head><body>Reply</body></html>",
+        RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
+
+
+def test_gmail_quote_compact():
+    msg_body = 'Reply' \
+               '<div class="gmail_quote">' \
+               '<div class="gmail_quote">On 11-Apr-2011, at 6:54 PM, Bob &lt;bob@example.com&gt; wrote:' \
+               '<div>Test</div>' \
+               '</div>' \
+               '</div>'
+    eq_("<html><head></head><body>Reply</body></html>",
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
 
@@ -154,7 +167,7 @@ def test_unicode_in_reply():
   Quote
 </blockquote>""".encode("utf-8")
 
-    eq_("<html><body><p>Reply&#160;&#160;Text<br></p><div><br></div>"
+    eq_("<html><head></head><body>Reply&#160;&#160;Text<br><div><br></div>"
         "</body></html>",
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
@@ -180,6 +193,7 @@ def test_blockquote_disclaimer():
 
     stripped_html = """
 <html>
+  <head></head>
   <body>
   <div>
     <div>
@@ -211,7 +225,7 @@ def test_date_block():
   </div>
 </div>
 """
-    eq_('<html><body><div>message<br></div></body></html>',
+    eq_('<html><head></head><body><div>message<br></div></body></html>',
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
 
@@ -228,7 +242,7 @@ Subject: You Have New Mail From Mary!<br><br>
 text
 </div></div>
 """
-    eq_('<html><body><div>message<br></div></body></html>',
+    eq_('<html><head></head><body><div>message<br></div></body></html>',
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
 
@@ -246,7 +260,7 @@ def test_reply_shares_div_with_from_block():
 
   </div>
 </body>'''
-    eq_('<html><body><div>Blah<br><br></div></body></html>',
+    eq_('<html><head></head><body><div>Blah<br><br></div></body></html>',
         RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
 
 
@@ -257,23 +271,49 @@ def test_reply_quotations_share_block():
 
 
 def test_OLK_SRC_BODY_SECTION_stripped():
-    eq_('<html><body><div>Reply</div></body></html>',
+    eq_('<html><head></head><body><div>Reply</div></body></html>',
         RE_WHITESPACE.sub(
             '', quotations.extract_from_html(OLK_SRC_BODY_SECTION)))
 
 
 def test_reply_separated_by_hr():
-    eq_('<html><body><div>Hi<div>there</div></div></body></html>',
+    eq_('<html><head></head><body><div>Hi<div>there</div></div></body></html>',
         RE_WHITESPACE.sub(
             '', quotations.extract_from_html(REPLY_SEPARATED_BY_HR)))
 
 
+def test_from_block_and_quotations_in_separate_divs():
+    msg_body = '''
+Reply
+<div>
+  <hr/>
+  <div>
+    <font>
+      <b>From: bob@example.com</b>
+      <b>Date: Thu, 24 Mar 2016 08:07:12 -0700</b>
+    </font>
+  </div>
+  <div>
+    Quoted message
+  </div>
+</div>
+'''
+    eq_('<html><head></head><body>Reply<div><hr></div></body></html>',
+        RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
+
+
 def extract_reply_and_check(filename):
-    f = open(filename)
+    import sys
+    kwargs = {}
+    if sys.version_info > (3, 0):
+        kwargs["encoding"] = "utf8"
+
+    f = open(filename, **kwargs)
 
     msg_body = f.read()
     reply = quotations.extract_from_html(msg_body)
     plain_reply = u.html_to_text(reply)
+    plain_reply = plain_reply.decode('utf8')
 
     eq_(RE_WHITESPACE.sub('', "Hi. I am fine.\n\nThanks,\nAlex"),
         RE_WHITESPACE.sub('', plain_reply))
@@ -323,7 +363,8 @@ def test_CRLF():
     assert_false(symbol in extracted)
     eq_('<html></html>', RE_WHITESPACE.sub('', extracted))
 
-    msg_body = """Reply
+    msg_body = """My
+reply
 <blockquote>
 
   <div>
@@ -337,6 +378,49 @@ def test_CRLF():
 </blockquote>"""
     msg_body = msg_body.replace('\n', '\r\n')
     extracted = quotations.extract_from_html(msg_body)
-    assert_false(symbol in extracted)    
-    eq_("<html><body><p>Reply</p></body></html>",
-        RE_WHITESPACE.sub('', extracted))
+    assert_false(symbol in extracted)
+    # Keep new lines otherwise "My reply" becomes one word - "Myreply" 
+    eq_("<html><head></head><body>My\nreply\n</body></html>", extracted)
+
+
+def test_gmail_forwarded_msg():
+    msg_body = """<div dir="ltr"><br><div class="gmail_quote">---------- Forwarded message ----------<br>From: <b class="gmail_sendername">Bob</b> <span dir="ltr">&lt;<a href="mailto:bob@example.com">bob@example.com</a>&gt;</span><br>Date: Fri, Feb 11, 2010 at 5:59 PM<br>Subject: Bob WFH today<br>To: Mary &lt;<a href="mailto:mary@example.com">mary@example.com</a>&gt;<br><br><br><div dir="ltr">eom</div>
+</div><br></div>"""
+    extracted = quotations.extract_from_html(msg_body)
+    eq_(RE_WHITESPACE.sub('', msg_body), RE_WHITESPACE.sub('', extracted))
+
+
+@patch.object(u, '_MAX_TAGS_COUNT', 4)
+def test_too_large_html():
+    msg_body = 'Reply' \
+               '<div class="gmail_quote">' \
+               '<div class="gmail_quote">On 11-Apr-2011, at 6:54 PM, Bob &lt;bob@example.com&gt; wrote:' \
+               '<div>Test</div>' \
+               '</div>' \
+               '</div>'
+    eq_(RE_WHITESPACE.sub('', msg_body),
+        RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
+
+
+def test_readable_html_empty():
+    msg_body = """
+<blockquote>
+  Reply
+  <div>
+    On 11-Apr-2011, at 6:54 PM, Bob &lt;bob@example.com&gt; wrote:
+  </div>
+
+  <div>
+    Test
+  </div>
+
+</blockquote>"""
+
+    eq_(RE_WHITESPACE.sub('', msg_body),
+        RE_WHITESPACE.sub('', quotations.extract_from_html(msg_body)))
+
+
+@patch.object(quotations, 'html_document_fromstring', Mock(return_value=None))
+def test_bad_html():
+    bad_html = "<html></html>"
+    eq_(bad_html, quotations.extract_from_html(bad_html))
